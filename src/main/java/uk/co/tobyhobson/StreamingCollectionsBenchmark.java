@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 @Warmup(iterations = 10)
 @Measurement(iterations = 10)
 @Threads(1)
-@Fork(0)
+@Fork(5)
 public class StreamingCollectionsBenchmark {
 
     private static final int COLLECTION_SIZE = 1_000_000;
@@ -71,32 +71,32 @@ public class StreamingCollectionsBenchmark {
 
     }
 
-    @Benchmark
-    public long testLinkedListStream() {
-        long sum = linkedListValues.stream().reduce((l, r) -> l + r).get();
-        assert sum == expectedCount;
-        return sum;
-    }
-
-    @Benchmark
-    public long testParallelLinkedListStream() {
-        long sum = linkedListValues.parallelStream().reduce((l, r) -> l + r).get();
-        assert sum == expectedCount;
-        return sum;
-    }
-
-    @Benchmark
-    public long testArrayListStream() {
-        long sum = arrayListValues.stream().mapToLong((o) -> o.longValue()).sum();
-        assert sum == expectedCount;
-        return sum;
-    }
-
-    @Benchmark
-    public long testParallelArrayListStream() {
-        long sum = arrayListValues.stream().mapToLong((o) -> o.longValue()).sum();
-        assert sum == expectedCount;
-        return sum;
-    }
+//    @Benchmark
+//    public long linkedListStream() {
+//        long sum = linkedListValues.stream().reduce((l, r) -> l + r).get();
+//        assert sum == expectedCount;
+//        return sum;
+//    }
+//
+//    @Benchmark
+//    public long parallelLinkedListStream() {
+//        long sum = linkedListValues.parallelStream().reduce((l, r) -> l + r).get();
+//        assert sum == expectedCount;
+//        return sum;
+//    }
+//
+//    @Benchmark
+//    public long arrayListStream() {
+//        long sum = arrayListValues.stream().reduce((l, r) -> l + r).get();
+//        assert sum == expectedCount;
+//        return sum;
+//    }
+//
+//    @Benchmark
+//    public long parallelArrayListStream() {
+//        long sum = arrayListValues.parallelStream().mapToLong(Integer::intValue).sum();
+//        assert sum == expectedCount;
+//        return sum;
+//    }
 
 }

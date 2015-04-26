@@ -43,14 +43,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.IntStream;
 
 @State(Scope.Thread)
 @OutputTimeUnit(TimeUnit.SECONDS)
 @BenchmarkMode(Mode.Throughput)
 @Warmup(iterations = 10)
 @Measurement(iterations = 10)
-@Fork(0)
 @Threads(1)
+@Fork(5)
 public class NonStreamingCollectionsBenchmark {
 
     private static final int COLLECTION_SIZE = 1_000_000;
@@ -60,8 +61,8 @@ public class NonStreamingCollectionsBenchmark {
     long expectedCount;
     ExecutorService executorService;
 
-//    @Param({"-1", "1", "2", "3", "4"})
-    public int numThreads = 3;
+    @Param({"-1", "1", "2", "3", "4", "5", "6", "7", "8"})
+    public int numThreads;
 
     @Setup
     public void setup() {
@@ -70,18 +71,21 @@ public class NonStreamingCollectionsBenchmark {
         arrayValues = new int[COLLECTION_SIZE];
 
         Random random = new Random(System.currentTimeMillis());
-        for (int i=0; i<COLLECTION_SIZE; i++) {
+        for (int i = 0; i < COLLECTION_SIZE; i++) {
             int randomValue = random.nextInt(10);
             linkedListValues.add(randomValue);
             arrayListValues.add(randomValue);
             arrayValues[i] = randomValue;
         }
 
-        for (int value: arrayValues) {
+        for (int value : arrayValues) {
             expectedCount += value;
         }
 
-        executorService = Executors.newFixedThreadPool(numThreads);
+        if (numThreads == -1)
+            executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        else
+            executorService = Executors.newFixedThreadPool(numThreads);
 
     }
 
@@ -91,7 +95,7 @@ public class NonStreamingCollectionsBenchmark {
     }
 
     @Benchmark
-    public long testPrimitiveLoop() {
+    public long primitiveLoop() {
         long sum = 0;
         for (int arrayValue : arrayValues) {
             sum += arrayValue;
@@ -101,30 +105,68 @@ public class NonStreamingCollectionsBenchmark {
     }
 
     @Benchmark
-    public long testArrayBackedPrimitiveLoop() {
-        long sum = 0;
-        for (int arrayValue : arrayValues) {
-            sum += arrayValue;
+    public long parallelPrimitiveLoop() {
+        final AtomicLong totalSum = new AtomicLong(0);
+        final int threadCount = Runtime.getRuntime().availableProcessors();
+        final int chunkSize = arrayValues.length / threadCount;
+        final int remainder = arrayValues.length % chunkSize;
+        int[][] chunks = new int[threadCount][chunkSize];
+
+        for (int j = 0; j < threadCount; j++) {
+            int[] chunk = new int[chunkSize];
+            if (j == threadCount -1)
+                System.arraycopy(arrayValues, j * chunkSize, chunk, 0, chunkSize + remainder);
+            else
+                System.arraycopy(arrayValues, j * chunkSize, chunk, 0, chunkSize);
+            chunks[j] = chunk;
         }
-        assert sum == expectedCount;
-        return sum;
+
+        Thread[] threads = new Thread[threadCount];
+        for (int j = 0; j < threadCount; j++) {
+            int[] chunk = chunks[j];
+            Thread t = new Thread(() -> {
+                long localSum = 0;
+                for (int arrayValue : chunk) {
+                    localSum += arrayValue;
+                }
+                totalSum.getAndAdd(localSum);
+            });
+            threads[j] = t;
+            t.start();
+        }
+
+        for (int j = 0; j < threadCount; j++) {
+            try {
+                threads[j].join();
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+        assert totalSum.get() == expectedCount;
+        return totalSum.get();
     }
 
     @Benchmark
-    public long testParallelPrimitiveLoop() throws InterruptedException {
+    public long parallelListLoop() throws InterruptedException {
         AtomicLong totalSum = new AtomicLong(0);
         AtomicInteger totalInvocationCount = new AtomicInteger(0);
-        int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
-        int chunkSize = arrayListValues.size() / threadCount;
+        final int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
+        final int chunkSize = arrayListValues.size() / threadCount;
+        final int remainder = arrayValues.length % chunkSize;
         List<List<Integer>> chunks = new ArrayList<>();
 
-        for (int j=0; j<threadCount; j++) {
-            List<Integer> chunk = arrayListValues.subList(j * chunkSize, (j * chunkSize) + chunkSize);
+        for (int j = 0; j < threadCount; j++) {
+            List<Integer> chunk;
+            if ( j == threadCount - 1)
+                chunk = arrayListValues.subList(j * chunkSize, (j * chunkSize) + (chunkSize + remainder));
+            else
+                chunk = arrayListValues.subList(j * chunkSize, (j * chunkSize) + chunkSize);
             chunks.add(chunk);
         }
 
         Thread[] threads = new Thread[threadCount];
-        for (int j=0; j<threadCount; j++) {
+        for (int j = 0; j < threadCount; j++) {
             List<Integer> chunk = chunks.get(j);
             Thread t = new Thread(() -> {
                 long localSum = 0;
@@ -140,7 +182,7 @@ public class NonStreamingCollectionsBenchmark {
             t.start();
         }
 
-        for (int j=0; j<threadCount; j++) {
+        for (int j = 0; j < threadCount; j++) {
             try {
                 threads[j].join();
             } catch (InterruptedException ex) {
@@ -148,7 +190,7 @@ public class NonStreamingCollectionsBenchmark {
             }
         }
 
-        for (int i=arrayValues.length-1; i>=totalInvocationCount.get(); i--) {
+        for (int i = arrayValues.length - 1; i >= totalInvocationCount.get(); i--) {
             totalSum.getAndAdd(arrayValues[i]);
         }
 
@@ -157,35 +199,36 @@ public class NonStreamingCollectionsBenchmark {
     }
 
     @Benchmark
-    public long testParallelPrimitiveLoopSharedCollection() throws InterruptedException {
-        AtomicLong totalSum = new AtomicLong(0);
-        AtomicInteger totalInvocationCount = new AtomicInteger(0);
-        int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
-        int chunkSize = arrayValues.length / threadCount;
+    public long sharedStateThreads() throws InterruptedException {
+        final AtomicLong totalSum = new AtomicLong(0);
+        final int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
+        final int chunkSize = arrayValues.length / threadCount;
+        final int remainder = arrayValues.length % chunkSize;
 
         Thread[] threads = new Thread[threadCount];
-        for (int j=0; j<threadCount; j++) {
+        for (int j = 0; j < threadCount; j++) {
             final int k = j;
 
             Thread t = new Thread(() -> {
                 int startPosition = k * chunkSize;
-                int endPosition = startPosition + chunkSize;
+                int endPosition = 0;
+                if (k == threadCount -1)
+                    endPosition = startPosition + (chunkSize + remainder);
+                else
+                    endPosition = startPosition + chunkSize;
                 int localSum = 0;
-                int invocationCount = 0;
                 for (int index = startPosition; index < endPosition; index++) {
                     int arrayValue = arrayValues[index];
                     localSum += arrayValue;
-                    invocationCount++;
                 }
                 totalSum.getAndAdd(localSum);
-                totalInvocationCount.getAndAdd(invocationCount);
             });
 
             threads[j] = t;
             t.start();
         }
 
-        for (int j=0; j<threadCount; j++) {
+        for (int j = 0; j < threadCount; j++) {
             try {
                 threads[j].join();
             } catch (InterruptedException ex) {
@@ -193,37 +236,39 @@ public class NonStreamingCollectionsBenchmark {
             }
         }
 
-        for (int i=arrayValues.length-1; i>=totalInvocationCount.get(); i--) {
-            totalSum.getAndAdd(arrayValues[i]);
-        }
-
         assert totalSum.get() == expectedCount;
         return totalSum.get();
     }
 
     @Benchmark
-    public long testThreadPool() throws InterruptedException {
-        AtomicInteger totalInvocationCount = new AtomicInteger(0);
-        AtomicLong totalSum = new AtomicLong(0);
-        int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
-        int chunkSize = arrayValues.length / threadCount;
+    public long sharedStateThreadPool() throws InterruptedException {
+        final AtomicLong totalSum = new AtomicLong(0);
+        final int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
+        final int chunkSize = arrayValues.length / threadCount;
+        final int remainder = arrayValues.length % chunkSize;
 
-        CountDownLatch latch = new CountDownLatch(numThreads);
-        for (int j=0; j<threadCount; j++) {
+        CountDownLatch latch;
+        if (numThreads == -1)
+            latch = new CountDownLatch(Runtime.getRuntime().availableProcessors());
+        else
+            latch = new CountDownLatch(numThreads);
+
+        for (int j = 0; j < threadCount; j++) {
             final int k = j;
 
             Runnable r = () -> {
                 int startPosition = k * chunkSize;
-                int endPosition = startPosition + chunkSize;
+                int endPosition = 0;
+                if (k == threadCount - 1)
+                    endPosition = startPosition + chunkSize + remainder;
+                else
+                    endPosition = startPosition + chunkSize;
                 int localSum = 0;
-                int invocationCount = 0;
                 for (int index = startPosition; index < endPosition; index++) {
                     int arrayValue = arrayValues[index];
                     localSum += arrayValue;
-                    invocationCount++;
                 }
                 totalSum.addAndGet(localSum);
-                totalInvocationCount.getAndAdd(invocationCount);
                 latch.countDown();
             };
 
@@ -231,10 +276,6 @@ public class NonStreamingCollectionsBenchmark {
         }
 
         latch.await();
-
-        for (int i=arrayValues.length-1; i>=totalInvocationCount.get(); i--) {
-            totalSum.getAndAdd(arrayValues[i]);
-        }
 
         assert totalSum.get() == expectedCount;
         return totalSum.get();
