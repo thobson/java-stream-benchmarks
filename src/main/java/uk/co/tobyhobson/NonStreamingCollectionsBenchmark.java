@@ -1,34 +1,16 @@
 /*
- * Copyright (c) 2014, Oracle America, Inc.
- * All rights reserved.
+ * (C) Copyright 2015 Toby Hobson (https://www.tobyhobson.co.uk/)
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the GNU Lesser General Public License
+ * (LGPL) version 2.1 which accompanies this distribution, and is available at
+ * http://www.gnu.org/licenses/lgpl-2.1.html
  *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- *  * Neither the name of Oracle nor the names of its contributors may be used
- *    to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
- * THE POSSIBILITY OF SUCH DAMAGE.
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
  */
-
 package uk.co.tobyhobson;
 
 import org.openjdk.jmh.annotations.*;
@@ -43,15 +25,21 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.IntStream;
 
+/**
+ * Benchmark results using Arrays, Lists, Loops and Threads. See also StreamingCollectionsBenchmark and
+ * the JMH documentation to understand the class annotations used.
+ *
+ * @author Toby Hobson toby.hobson at gmail.com
+ * @see StreamingCollectionsBenchmark
+ */
 @State(Scope.Thread)
 @OutputTimeUnit(TimeUnit.SECONDS)
 @BenchmarkMode(Mode.Throughput)
-@Warmup(iterations = 10)
-@Measurement(iterations = 10)
+@Warmup(iterations = 5)
+@Measurement(iterations = 5)
 @Threads(1)
-@Fork(5)
+@Fork(0)
 public class NonStreamingCollectionsBenchmark {
 
     private static final int COLLECTION_SIZE = 1_000_000;
@@ -59,8 +47,17 @@ public class NonStreamingCollectionsBenchmark {
     List<Integer> linkedListValues, arrayListValues;
     int[] arrayValues;
     long expectedCount;
-    ExecutorService executorService;
+    ExecutorService executorService; // A thread pool implementation
 
+    /**
+     * JMH offers parametrised benchmarks which results in multiple runs of each benchmark.
+     * We use this parameter to see how well the code performs with various threading options.
+     * Adjust this to suit your own environment.
+     *
+     * -1 means use the OS reported processor count - Runtime.getRuntime().availableProcessors(). Note this may be
+     * double what you expect if your CPU supports hyper threading e.g. I have a quad core i7 machine but the
+     * OS thinks I have 8 processors
+     */
     @Param({"-1", "1", "2", "3", "4", "5", "6", "7", "8"})
     public int numThreads;
 
@@ -94,6 +91,12 @@ public class NonStreamingCollectionsBenchmark {
         executorService.shutdown();
     }
 
+    /**
+     * The most basic (but quite performant) implementation. It uses a single threaded for-loop to iterate through
+     * each element in the raw array
+     *
+     * @return total of all array values
+     */
     @Benchmark
     public long primitiveLoop() {
         long sum = 0;
@@ -104,6 +107,15 @@ public class NonStreamingCollectionsBenchmark {
         return sum;
     }
 
+    /**
+     * A multi threaded version of the for-loop. It splits the array into n smaller arrays where n = numThreads
+     * and then starts n threads to process each chunk. An AtomicInteger is shared by all threads and each thread
+     * calculates the sum of it's chunk and then adds to the AtomicInteger.
+     *
+     * A cleaner implementation would probably use Java Futures to avoid the shared variable
+     *
+     * @return total of the array values
+     */
     @Benchmark
     public long parallelPrimitiveLoop() {
         final AtomicLong totalSum = new AtomicLong(0);
@@ -147,8 +159,17 @@ public class NonStreamingCollectionsBenchmark {
         return totalSum.get();
     }
 
+    /**
+     * Similar to the parallelPrimitiveLoop() however it uses an ArrayList of Integers instead
+     * of a raw array of ints (primitives). The split is much more efficient because the JVM can simply
+     * reassign object references instead of needing the physically copy the values
+     *
+     * As with parallelPrimitiveLoop() A cleaner implementation would probably use Java Futures to avoid the shared variable
+     *
+     * @return total of the arrayList values
+     */
     @Benchmark
-    public long parallelListLoop() throws InterruptedException {
+    public long parallelListLoop() {
         AtomicLong totalSum = new AtomicLong(0);
         AtomicInteger totalInvocationCount = new AtomicInteger(0);
         final int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
@@ -198,8 +219,17 @@ public class NonStreamingCollectionsBenchmark {
         return totalSum.get();
     }
 
+    /**
+     * Instead of copying the array into n chunks we share the array across n threads. Each thread works on it's own
+     * section of the array. Splitting an array of 1 million entries is an expensive operation which this algorithm
+     * avoids.
+     *
+     * A cleaner implementation would probably use Java Futures to avoid the shared variable
+     *
+     * @return total of the array values
+     */
     @Benchmark
-    public long sharedStateThreads() throws InterruptedException {
+    public long sharedStateThreads() {
         final AtomicLong totalSum = new AtomicLong(0);
         final int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
         final int chunkSize = arrayValues.length / threadCount;
@@ -240,13 +270,29 @@ public class NonStreamingCollectionsBenchmark {
         return totalSum.get();
     }
 
+    /**
+     * Similar to the sharedStateThreads() however this algorithm uses a preexisting thread pool (ExecutorService)
+     * creating threads for short lived operations is expensive and best avoided. This algorithm is therefore the most
+     * performant of all as it:
+     *
+     * 1. Uses a raw array of primitive types (avoid autoboxing and the collections overhead)
+     * 2. Shares the array among the threads thus avoiding the expensive split operation
+     * 3. Reuses existing threads to avoid the overhead of thread creation
+     *
+     * A cleaner implementation would probably use Java Futures to avoid the shared variable
+     *
+     * @return total of the array values
+     */
     @Benchmark
-    public long sharedStateThreadPool() throws InterruptedException {
+    public long sharedStateThreadPool() {
         final AtomicLong totalSum = new AtomicLong(0);
         final int threadCount = numThreads != -1 ? numThreads : Runtime.getRuntime().availableProcessors();
         final int chunkSize = arrayValues.length / threadCount;
         final int remainder = arrayValues.length % chunkSize;
 
+        // We need some means to know when the threads have done their work. With raw threads we can join them
+        // but we don't have that option with an ExecutorService so we use a countdown latch. Again a cleaner
+        // implementation would use Futures/Callable i.e. executorService.invokeAll(tasks)
         CountDownLatch latch;
         if (numThreads == -1)
             latch = new CountDownLatch(Runtime.getRuntime().availableProcessors());
@@ -275,7 +321,11 @@ public class NonStreamingCollectionsBenchmark {
             executorService.submit(r);
         }
 
-        latch.await();
+        try {
+            latch.await();
+        } catch (InterruptedException ex) {
+            ex.printStackTrace();
+        }
 
         assert totalSum.get() == expectedCount;
         return totalSum.get();
