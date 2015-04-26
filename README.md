@@ -1,7 +1,7 @@
 # java-stream-benchmarks
 Micro benchmarks comparing various stream and non stream implementations of a summing algorithm. The benchmark was
-performed with the [http://java-performance.info/jmh/](JMH) benchmark. 
-See this [https://www.tobyhobson.co.uk/java-8-streams-performance/](blog post) for more information
+performed with the (JMH)http://java-performance.info/jmh/] benchmark. 
+See this (blog post)[https://www.tobyhobson.co.uk/java-8-streams-performance/]for more information
 
 To run the benchmarks execute `mvn clean install && java -server -jar target/benchmarks.jar`
 
